@@ -11,6 +11,7 @@ st.markdown("""
     <style>
     .main { background-color: #0b1016; color: #ffffff; }
     .title-text { font-size: 38px; font-weight: 800; color: #ffffff; margin-bottom: 0px; }
+    .stNumberInput label { color: #8b949e !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -42,18 +43,15 @@ def get_market_intelligence():
             prices = data[t].dropna()
             if len(prices) < 50: continue
             
-            # Calcul RSI
             delta = prices.diff()
             gain = (delta.where(delta > 0, 0)).rolling(14).mean()
             loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
             rsi = 100 - (100 / (1 + (gain/loss))).iloc[-1]
             
-            # Tendance (SMA 50)
             sma50 = prices.rolling(50).mean().iloc[-1]
             curr_p = prices.iloc[-1]
             trend = "Bullish" if curr_p > sma50 else "Bearish"
             
-            # Algo Score
             score = 50
             if curr_p > sma50: score += 15
             if rsi < 35: score += 20
@@ -77,21 +75,53 @@ def get_market_intelligence():
     return df
 
 # --- DASHBOARD ---
-col_table, col_viz = st.columns([2, 1])
+col_table, col_viz = st.columns([1.8, 1])
+
+df_final = get_market_intelligence()
 
 with col_table:
     st.subheader("Market Intelligence Scanner")
-    df_final = get_market_intelligence()
-    st.dataframe(df_final.sort_values(by="Confiance", ascending=False), use_container_width=True, height=500)
+    st.dataframe(df_final.sort_values(by="Confiance", ascending=False), use_container_width=True, height=600)
 
 with col_viz:
     st.subheader("Technical Focus")
     selected = st.selectbox("Action :", df_final["Actif"].tolist())
+    
+    # Graphique
     df_chart = yf.download(selected, period="6mo", progress=False)
     df_chart.columns = [c[0] if isinstance(c, tuple) else c for c in df_chart.columns]
-    
     fig = go.Figure(data=[go.Candlestick(x=df_chart.index, open=df_chart['Open'], high=df_chart['High'], low=df_chart['Low'], close=df_chart['Close'])])
-    fig.update_layout(template="plotly_dark", height=350, margin=dict(l=0,r=0,t=0,b=0), xaxis_rangeslider_visible=False)
+    fig.update_layout(template="plotly_dark", height=300, margin=dict(l=0,r=0,t=0,b=0), xaxis_rangeslider_visible=False)
     st.plotly_chart(fig, use_container_width=True)
+
+    # --- SIMULATEUR DE PORTEFEUILLE ---
+    st.markdown("---")
+    st.subheader("Simulateur de Position")
+    
+    capital = st.number_input("Capital total ($)", min_value=100, value=10000, step=500)
+    risk_percent = st.slider("Risque par trade (%)", 0.5, 5.0, 1.0)
+    
+    # Récupération du prix actuel de l'action sélectionnée
+    current_price = df_final[df_final["Actif"] == selected]["Prix ($)"].values[0]
+    protection_price = df_final[df_final["Actif"] == selected]["Protection"].values[0]
+    
+    # Calculs
+    risk_amount = capital * (risk_percent / 100)
+    risk_per_share = current_price - protection_price
+    
+    if risk_per_share > 0:
+        shares_to_buy = int(risk_amount / risk_per_share)
+        total_cost = shares_to_buy * current_price
+    else:
+        shares_to_buy = 0
+        total_cost = 0
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.metric("Actions à acheter", f"{shares_to_buy}")
+    with c2:
+        st.metric("Investissement requis", f"{total_cost:,.2f} $")
+    
+    st.warning(f"Si le prix touche la Protection ({protection_price}$), vous perdrez {risk_amount}$.")
 
 st.caption(f"© 2026 LB Quantum Analytics | Institutional Data Feed")
